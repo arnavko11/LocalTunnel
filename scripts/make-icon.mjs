@@ -12,7 +12,9 @@
  * pixel is supersampled 4×4, so the curves are properly anti-aliased.
  *
  * Output lands in packages/desktop/assets/icons, which is checked in — build/
- * is ignored, and the icon is a source asset rather than a build product.
+ * is ignored, and the icon is a source asset rather than a build product. The
+ * macOS .icns, the Windows .ico and the per-size PNGs Linux needs all come from
+ * the same drawing.
  *
  * Usage: node scripts/make-icon.mjs
  */
@@ -225,6 +227,14 @@ writeFileSync(
   ico([16, 32, 48, 64, 128, 256].map((size) => ({ size, data: rendered.get(size) }))),
 );
 
+// Linux has no single-file icon container: electron-builder wants a directory of
+// `<size>x<size>.png`, and a .deb installs the same sizes under hicolor. Write
+// them all out so both get a properly-drawn icon at every size rather than a
+// downscale of the 1024.
+const pngDir = join(outDir, 'png');
+mkdirSync(pngDir, { recursive: true });
+for (const size of sizes) writeFileSync(join(pngDir, `${size}x${size}.png`), rendered.get(size));
+
 // macOS wants an .iconset directory, which iconutil turns into an .icns.
 const iconset = join(outDir, 'icon.iconset');
 rmSync(iconset, { recursive: true, force: true });
@@ -246,7 +256,7 @@ for (const [size, name] of icns) writeFileSync(join(iconset, name), rendered.get
 if (process.platform === 'darwin') {
   execFileSync('iconutil', ['-c', 'icns', iconset, '-o', join(outDir, 'icon.icns')]);
   rmSync(iconset, { recursive: true, force: true });
-  console.log('wrote icon.png, icon.ico, icon.icns');
+  console.log('wrote icon.png, icon.ico, icon.icns and png/ (Linux)');
 } else {
-  console.log('wrote icon.png, icon.ico and icon.iconset (run iconutil on macOS for .icns)');
+  console.log('wrote icon.png, icon.ico, png/ (Linux) and icon.iconset (run iconutil on macOS for .icns)');
 }

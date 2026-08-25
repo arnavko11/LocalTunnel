@@ -27,6 +27,14 @@ const PACKAGE = 'localtunnel-desktop';
 const INSTALL_DIR = `/opt/${pkg.build.productName}`;
 const LAUNCHER = pkg.build.linux.executableName;
 
+/*
+ * Icon sizes installed under hicolor. These are the sizes the icon theme spec
+ * lists, and the ones desktops actually look in — a lone 1024x1024 is outside
+ * that set, so a menu asking for 48px would find nothing and fall back to a
+ * generic icon. scripts/make-icon.mjs draws each one; they are not downscales.
+ */
+const ICON_SIZES = [16, 32, 48, 64, 128, 256, 512];
+
 /** Everything Electron needs at runtime on a Debian-family system. */
 const DEPENDS = [
   'libgtk-3-0',
@@ -169,10 +177,17 @@ function walk(dir, base = dir) {
   return entries;
 }
 
+/*
+ * `--class` is passed rather than left to Chromium, which would derive the
+ * window's WM_CLASS from the executable name — `Localtunnel-desktop`, not the
+ * product name. Naming it here makes StartupWMClass below match for certain,
+ * which is what lets a shell put this icon on the running window instead of a
+ * generic one.
+ */
 const DESKTOP_ENTRY = `[Desktop Entry]
 Name=${pkg.build.productName}
 Comment=${pkg.description}
-Exec=${LAUNCHER} %U
+Exec=${LAUNCHER} --class=${pkg.build.productName} %U
 Terminal=false
 Type=Application
 Icon=${PACKAGE}
@@ -213,8 +228,11 @@ function build({ deb, dir }) {
   for (const parent of ['./opt', `.${INSTALL_DIR}`, './usr', './usr/bin', './usr/share', './usr/share/applications']) {
     data.addDirectory(parent);
   }
-  for (const part of ['./usr/share/icons', './usr/share/icons/hicolor', './usr/share/icons/hicolor/1024x1024', './usr/share/icons/hicolor/1024x1024/apps']) {
-    data.addDirectory(part);
+  data.addDirectory('./usr/share/icons');
+  data.addDirectory('./usr/share/icons/hicolor');
+  for (const size of ICON_SIZES) {
+    data.addDirectory(`./usr/share/icons/hicolor/${size}x${size}`);
+    data.addDirectory(`./usr/share/icons/hicolor/${size}x${size}/apps`);
   }
 
   for (const entry of entries) {
@@ -236,9 +254,13 @@ function build({ deb, dir }) {
   const desktopEntry = Buffer.from(DESKTOP_ENTRY, 'utf8');
   data.add(`./usr/share/applications/${PACKAGE}.desktop`, desktopEntry);
   md5s.push(`${createHash('md5').update(desktopEntry).digest('hex')}  usr/share/applications/${PACKAGE}.desktop`);
-  const icon = readFileSync(join(desktop, 'assets', 'icons', 'icon.png'));
-  data.add(`./usr/share/icons/hicolor/1024x1024/apps/${PACKAGE}.png`, icon);
-  md5s.push(`${createHash('md5').update(icon).digest('hex')}  usr/share/icons/hicolor/1024x1024/apps/${PACKAGE}.png`);
+  for (const size of ICON_SIZES) {
+    const icon = readFileSync(join(desktop, 'assets', 'icons', 'png', `${size}x${size}.png`));
+    const path = `usr/share/icons/hicolor/${size}x${size}/apps/${PACKAGE}.png`;
+    data.add(`./${path}`, icon);
+    md5s.push(`${createHash('md5').update(icon).digest('hex')}  ${path}`);
+    installedBytes += icon.length;
+  }
 
   const control = [
     `Package: ${PACKAGE}`,

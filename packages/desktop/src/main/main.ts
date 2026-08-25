@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, nativeTheme } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell, nativeTheme } from 'electron';
 import { join } from 'node:path';
 import { agentDataDir, installAutostart, removeAutostart } from '@localtunnel/agent';
 import { AppStore } from '../services/store.js';
@@ -42,6 +42,31 @@ function resources() {
       };
 }
 
+/**
+ * The window icon.
+ *
+ * macOS and Windows take it from the bundle — the .icns inside the .app, the
+ * .ico compiled into the .exe — so the running app is already branded there.
+ * Linux has no such thing: an X11 or Wayland window shows whatever the process
+ * publishes as its own icon, and Electron publishes nothing unless told, which
+ * is why the taskbar and alt-tab used to show a bare Electron logo. The .desktop
+ * file's icon only covers the launcher, and only when its StartupWMClass happens
+ * to match, so the window has to carry the artwork itself.
+ *
+ * The path resolves the same packed or not: `dist/main` sits one level under the
+ * package root in the repo and under `app.asar` in a build, and Electron reads
+ * through the archive.
+ */
+function windowIcon(): Electron.NativeImage | undefined {
+  if (process.platform !== 'linux') return undefined;
+  // 512 rather than the 1024 master: window managers scale it down to 48px or
+  // less, and the smaller file is a tenth of the decode.
+  const icon = nativeImage.createFromPath(
+    join(__dirname, '..', '..', 'assets', 'icons', 'png', '512x512.png'),
+  );
+  return icon.isEmpty() ? undefined : icon;
+}
+
 function createWindow(): void {
   window = new BrowserWindow({
     width: 1180,
@@ -49,6 +74,8 @@ function createWindow(): void {
     minWidth: 940,
     minHeight: 640,
     title: 'LocalTunnel',
+    // Ignored on macOS and Windows, which read the bundle; see windowIcon().
+    icon: windowIcon(),
     // The UI is a single dark scheme, so the window must not flash light on open.
     backgroundColor: '#000000',
     /*

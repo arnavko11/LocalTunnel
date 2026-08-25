@@ -49,7 +49,8 @@
       "dist/**/*",
       "node_modules/**/*",
       "!node_modules/cpu-features/**",
-      "!node_modules/nan/**"
+      "!node_modules/nan/**",
+      "assets/icons/png/*.png"
     ],
     "npmRebuild": false,
     "extraResources": [
@@ -96,7 +97,7 @@
         "AppImage"
       ],
       "category": "Network",
-      "icon": "assets/icons/icon.png",
+      "icon": "assets/icons/png",
       "executableName": "localtunnel-desktop"
     }
   },
