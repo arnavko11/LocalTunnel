@@ -26,13 +26,31 @@ export class AgentSupervisor extends EventEmitter {
   private child: ChildProcess | null = null;
   private polling: NodeJS.Timeout | null = null;
   private lastStatus: TunnelStatus | null = null;
+  /** The start currently in flight, so concurrent callers share one attempt. */
+  private starting: Promise<void> | null = null;
 
   constructor(private readonly options: SupervisorOptions) {
     super();
   }
 
-  /** Start the agent if it is not already running (possibly from autostart). */
-  async ensureRunning(): Promise<void> {
+  /**
+   * Start the agent if it is not already running (possibly from autostart).
+   *
+   * Every entry point calls this — app startup, Connect, Start — and they overlap:
+   * without a single in-flight attempt two of them each spawn an agent, the second
+   * finds the first already holding the socket and exits 0, and the user is told
+   * the agent "did not start" while it is running perfectly well.
+   */
+  ensureRunning(): Promise<void> {
+    if (!this.starting) {
+      this.starting = this.launch().finally(() => {
+        this.starting = null;
+      });
+    }
+    return this.starting;
+  }
+
+  private async launch(): Promise<void> {
     if (await this.ping()) {
       this.startPolling();
       return;
@@ -40,11 +58,12 @@ export class AgentSupervisor extends EventEmitter {
     if (!existsSync(this.options.scriptPath)) {
       throw new Error('The LocalTunnel agent is missing from this installation.');
     }
-    this.child = spawn(this.options.execPath, [this.options.scriptPath], {
+    const child = spawn(this.options.execPath, [this.options.scriptPath], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     });
+    this.child = child;
     // Keep the tail of the agent's output: if it dies on startup this is the
     // only explanation anyone gets, and "connect ENOENT …/agent.sock" further
     // down the call is not one.
@@ -53,26 +72,39 @@ export class AgentSupervisor extends EventEmitter {
       output = `${output}${chunk.toString()}`.slice(-2000);
       this.emit('log', chunk.toString());
     };
-    this.child.stdout?.on('data', record);
-    this.child.stderr?.on('data', record);
+    child.stdout?.on('data', record);
+    child.stderr?.on('data', record);
     let exitCode: number | null = null;
-    this.child.on('exit', (code) => {
+    let exited = false;
+    child.on('exit', (code) => {
       exitCode = code;
+      exited = true;
       this.emit('log', `agent exited with code ${code}\n`);
-      this.child = null;
+      if (this.child === child) this.child = null;
     });
-    this.child.unref();
+    child.unref();
 
     // The IPC socket appears a moment after the process starts. Poll hard at
     // first — it is usually listening within a few tens of milliseconds — then
     // ease off so a genuinely broken start is not a busy loop.
     const deadline = Date.now() + 4000;
     let wait = 5;
-    while (Date.now() < deadline) {
+    for (;;) {
       if (await this.ping()) {
         this.startPolling();
         return;
       }
+      // A process that stood aside because another agent already holds the
+      // socket exits cleanly and says so. That is a running agent, not a failed
+      // start, so give the survivor a moment to answer before giving up.
+      if (exited) {
+        if (await this.waitForAgent(1000)) {
+          this.startPolling();
+          return;
+        }
+        break;
+      }
+      if (Date.now() >= deadline) break;
       await delay(wait);
       wait = Math.min(wait * 2, 100);
     }
@@ -81,6 +113,16 @@ export class AgentSupervisor extends EventEmitter {
       `The LocalTunnel agent did not start${exitCode === null ? '' : ` (exit code ${exitCode})`}.` +
         (detail ? `\n${detail}` : ''),
     );
+  }
+
+  /** Poll the socket for up to `ms` waiting for some agent to answer. */
+  private async waitForAgent(ms: number): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if (await this.ping()) return true;
+      if (Date.now() >= deadline) return false;
+      await delay(25);
+    }
   }
 
   private startPolling(): void {
@@ -101,9 +143,17 @@ export class AgentSupervisor extends EventEmitter {
     this.polling = null;
   }
 
+  /**
+   * Is an agent listening on the socket?
+   *
+   * `/alive` rather than `/status` on purpose: liveness is not authorisation. An
+   * agent that answers 401 — a control secret rewritten under a running agent,
+   * say — is still an agent, and spawning a second one on top of it only produces
+   * a process that stands aside and an error that blames the wrong thing.
+   */
   async ping(): Promise<boolean> {
     try {
-      await this.request('GET', '/status');
+      await this.request('GET', '/alive');
       return true;
     } catch {
       return false;
@@ -218,7 +268,9 @@ export class AgentSupervisor extends EventEmitter {
 
 export function defaultSocketPath(dataDir: string): string {
   if (platform() === 'win32') return '\\\\.\\pipe\\localtunnel-agent';
-  return `${dataDir}/agent.sock`;
+  // The agent honours this override, so the app has to as well: pointing only one
+  // of them at a different socket makes each invisible to the other.
+  return process.env.LOCALTUNNEL_AGENT_SOCKET ?? `${dataDir}/agent.sock`;
 }
 
 function delay(ms: number): Promise<void> {
