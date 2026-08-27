@@ -9,6 +9,7 @@ import { KnownHosts } from '../setup/known-hosts.js';
 import { UpdateChecker } from '../services/updates.js';
 import { detectSshCredentials, secureKeyFile } from '../setup/ssh-keys.js';
 import { runDiagnostics } from '../diagnostics/engine.js';
+import { MenuBar, menuBarSupported } from './menu-bar.js';
 
 let window: BrowserWindow | null = null;
 let store: AppStore;
@@ -16,6 +17,30 @@ let supervisor: AgentSupervisor;
 /** SSH host keys this app has pinned; see setup/known-hosts.ts. */
 let knownHosts: KnownHosts;
 let updates: UpdateChecker;
+/** The macOS status item, when this platform has one. */
+let menuBar: MenuBar | null = null;
+
+/**
+ * Run as a menu bar accessory rather than an ordinary app?
+ *
+ * With `--menu-bar` (or LOCALTUNNEL_MENU_BAR=1) the app puts nothing in the
+ * Dock and opens no window: it is the status item and the agent it supervises,
+ * which is what a background utility on macOS looks like. Without it the full
+ * app runs exactly as before, and on macOS gains the same status item alongside
+ * its window. Off macOS the flag does nothing — there is no menu bar to live in.
+ */
+function menuBarOnly(): boolean {
+  if (!menuBarSupported()) return false;
+  return process.argv.includes('--menu-bar') || process.env.LOCALTUNNEL_MENU_BAR === '1';
+}
+
+/** Show the main window, creating it if the user closed it. */
+function showWindow(): void {
+  if (!window) createWindow();
+  else if (window.isMinimized()) window.restore();
+  window?.show();
+  window?.focus();
+}
 
 /**
  * Paths to things shipped with the app: the agent it supervises, and the gateway
@@ -726,10 +751,32 @@ app.whenReady().then(async () => {
 
   nativeTheme.themeSource = store.settings.theme;
   registerIpc();
-  createWindow();
+
+  if (menuBarSupported()) {
+    menuBar = new MenuBar({
+      // The same supervisor the window's buttons drive; the menu bar adds no
+      // tunnel logic of its own.
+      start: () => supervisor.ensureRunning().then(() => supervisor.start()),
+      stop: () => supervisor.stop(),
+      showWindow: menuBarOnly() ? undefined : showWindow,
+      quit: () => app.quit(),
+    });
+    menuBar.create();
+    supervisor.on('status', (status) => menuBar?.update(status));
+    // The window is the only thing that keeps the poll running otherwise, and a
+    // menu bar with a stale label is worse than no menu bar.
+    void supervisor.status().then((status) => menuBar?.update(status));
+  }
+
+  if (menuBarOnly()) {
+    // No Dock tile, no window: an LSUIElement-style accessory.
+    app.dock?.hide();
+  } else {
+    createWindow();
+  }
 
   // If a gateway is already configured, get the tunnel up before the user asks.
-  if (store.gateways.length > 0) {
+  if (store.gateways.length > 0 || menuBarOnly()) {
     void supervisor.ensureRunning().catch(() => undefined);
   }
 
@@ -738,12 +785,21 @@ app.whenReady().then(async () => {
   setTimeout(() => void updates.check().catch(() => undefined), 5_000).unref();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    // In menu bar mode there is no Dock tile to click, and a window opened by a
+    // stray activate would defeat the point of the mode.
+    if (!menuBarOnly() && BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
 app.on('window-all-closed', () => {
   // The agent keeps tunnelling; closing the window is not "stop serving my site".
-  supervisor?.stopPolling();
+  // The status item still needs the status, though, so the poll only stops when
+  // nothing is left to show it to.
+  if (!menuBar) supervisor?.stopPolling();
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  menuBar?.destroy();
+  menuBar = null;
 });
