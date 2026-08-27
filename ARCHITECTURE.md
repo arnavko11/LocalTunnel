@@ -66,6 +66,7 @@ Every byte of public traffic follows `Internet → VPS → tunnel → agent → 
 │   └── main/            supervisor + local IPC for the desktop app
 ├── packages/desktop/    Electron app (macOS / Windows / Linux)
 │   ├── ui/              React renderer — Home, Services, Machines, Gateways, Domains, Diagnostics, Settings
+│   ├── main/            Electron main process, and the macOS menu bar status item
 │   ├── services/        gateway admin client, agent supervisor, config store
 │   ├── setup/           first-run flow, SSH-based gateway installer
 │   ├── providers/       Oracle Cloud 12-step wizard, other provider guides, DNS guides

@@ -57,6 +57,34 @@ Package the gateway payload the desktop app uploads to a VPS:
 ./scripts/bundle-gateway.sh
 ```
 
+## The macOS menu bar
+
+On macOS the app also puts a status item in the menu bar. Clicking it opens a native
+menu showing whether a tunnel is up, the gateway it is connected to, and for each
+published service its public URL and the local address it points at — with Copy
+Public URL, Start/Stop Tunnel, and Quit.
+
+Run it as a menu bar accessory, with no Dock tile and no window:
+
+```bash
+npm run desktop:menubar
+# or, equivalently, once built:
+LOCALTUNNEL_MENU_BAR=1 npm run desktop
+```
+
+`npm run desktop` still opens the normal window; on macOS it gains the same status
+item alongside it, so nothing about the existing app changes. The flag is ignored on
+Linux and Windows, which have no menu bar to live in, and the whole component is
+compiled out of their code path by a `process.platform` check.
+
+The icon is a *template* image — black artwork plus an alpha channel — so macOS tints
+it for a light or dark menu bar and inverts it again while the menu is open. Redraw
+the two states (idle and connected) with:
+
+```bash
+npm run icons:tray
+```
+
 ## The terminal client
 
 For a headless Linux box — a home server, a Pi, anything you only reach over SSH —

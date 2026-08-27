@@ -9,6 +9,7 @@
     "build:renderer": "vite build",
     "build": "npm run build:main && npm run build:renderer",
     "start": "npm run build && electron .",
+    "start:menubar": "npm run build && electron . --menu-bar",
     "dev": "vite",
     "dist": "../../scripts/bundle-gateway.sh && npm run build && electron-builder --config.electronVersion=$(node -p \"require('electron/package.json').version\")",
     "dist:mac": "npm run dist -- --mac",
@@ -50,7 +51,8 @@
       "node_modules/**/*",
       "!node_modules/cpu-features/**",
       "!node_modules/nan/**",
-      "assets/icons/png/*.png"
+      "assets/icons/png/*.png",
+      "assets/icons/tray/*.png"
     ],
     "npmRebuild": false,
     "extraResources": [
